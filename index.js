@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 
 // ================= TELEGRAM API =================
 function apiUrl(env, method) {
-  return \`https://api.telegram.org/bot\${env.BOT_TOKEN}/\${method}\`;
+  return `https://api.telegram.org/bot\${env.BOT_TOKEN}/\${method}\`;
 }
 
 async function tgCall(env, method, payload) {
