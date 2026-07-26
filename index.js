@@ -1,34 +1,3 @@
-/**
- * ============================================================================
- *  UZBEK TEST BOT — Cloudflare Workers + Telegram Bot API + D1
- * ============================================================================
- *  Talab qilingan barcha funksiyalar:
- *   ✅ Majburiy obuna (global blokator - obuna bo'lmasa bot ishlamaydi)
- *   ✅ Admin va Sub-admin tizimi + Botni yoqish/o'chirish (On/Off)
- *   ✅ Kanallarni boshqarish (Majburiy / Baza / Natijalar) + to'liq ro'yxat
- *   ✅ Test yaratish: fayl to'g'ridan-to'g'ri BOTGA yuboriladi, bot o'zi
- *      Baza kanaliga joylaydi (va kod orqali o'chirilganda kanaldan olib tashlaydi)
- *   ✅ Testni istalgan payt qo'lda yakunlash + reytingni Natijalar kanaliga chiqarish
- *   ✅ Testni o'chirishda barcha bog'liq ma'lumotlar (submissions, quiz_questions,
- *      user_polls, test_sessions) to'liq tozalanadi
- *   ✅ Oddiy test va Viktorina (Quiz) — ikkalasida ham reyting + xato savollar
- *   ✅ "Umumiy reyting" va "Kod orqali maxsus test reytingi"
- *   ✅ Broadcast (tsikl + yakuniy hisobot)
- *   ✅ Har bir qadamda "❌ Bekor qilish" tugmasi
- *
- *  ENV o'zgaruvchilari:
- *   BOT_TOKEN       — Telegram bot tokeni
- *   OWNER_ID        — Bosh administrator Telegram ID (raqam)
- *   WEBHOOK_SECRET  — Telegram webhook secret_token
- *   DB              — Cloudflare D1 bazasi binding
- *
- *  Endpointlar:
- *   GET /init-db  — bazani yaratish/yangilash
- *   GET /setup    — webhookni ulash
- *   POST /        — Telegram yangilanishlarini qabul qilish
- * ============================================================================
- */
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
