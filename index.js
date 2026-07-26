@@ -2,7 +2,6 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // ================= 1. BAZA YARATISH VA YANGILASH =================
     if (url.pathname === "/init-db") {
       try {
         await env.DB.batch([
@@ -71,7 +70,6 @@ export default {
           )`),
         ]);
 
-        // Eski bazalar uchun ustunlarni xavfsiz qo'shish
         const alters = [
           "ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0",
           "ALTER TABLE tests ADD COLUMN price REAL DEFAULT 0",
@@ -84,31 +82,24 @@ export default {
         ];
         for (const q of alters) { try { await env.DB.prepare(q).run(); } catch (e) {} }
 
-        // Standart sozlamalar
         await env.DB.prepare(
           "INSERT INTO settings (key, value) VALUES ('bot_enabled','1') ON CONFLICT(key) DO NOTHING"
         ).run();
 
-        return new Response("✅ Baza va barcha jadvallar muvaffaqiyatli yaratildi/yangilandi!", { status: 200 });
+        return new Response("✅ Baza yaratildi!", { status: 200 });
       } catch (e) {
         return new Response("Xato: " + e.message, { status: 500 });
       }
     }
 
-    // ================= 2. WEBHOOK ULASH =================
     if (url.pathname === "/setup") {
       const webhookUrl = `https://${url.hostname}/`;
       const res = await setWebhook(env, webhookUrl);
       return new Response(JSON.stringify(res), { headers: { "Content-Type": "application/json" } });
     }
 
-    // ================= 3. TELEGRAM YANGILANISHLARI =================
     if (request.method === "POST") {
       try {
-        const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-        if (env.WEBHOOK_SECRET && secret !== env.WEBHOOK_SECRET) {
-          return new Response("Forbidden", { status: 403 });
-        }
         const update = await request.json();
         await handleUpdate(update, env);
       } catch (err) {
@@ -117,7 +108,7 @@ export default {
       return new Response("OK", { status: 200 });
     }
 
-    return new Response("🤖 Uzbek Test Bot — Cloudflare Workers'da muvaffaqiyatli ishlamoqda!", { status: 200 });
+    return new Response("🤖 Bot ishlamoqda!", { status: 200 });
   },
 
   async scheduled(event, env, ctx) {
@@ -125,9 +116,6 @@ export default {
   },
 };
 
-// ============================================================================
-// ================= TELEGRAM API FUNKSIYALARI =================
-// ============================================================================
 function apiUrl(env, method) {
   return "https://api.telegram.org/bot" + env.BOT_TOKEN + "/" + method;
 }
@@ -140,10 +128,8 @@ async function tgCall(env, method, payload) {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (!data.ok) console.log(`Telegram xatosi [${method}]:`, JSON.stringify(data));
     return data;
   } catch (e) {
-    console.log(`Tarmoq xatosi [${method}]:`, e.message);
     return { ok: false, description: e.message };
   }
 }
@@ -204,16 +190,9 @@ async function getChat(env, chatId) {
 }
 
 async function setWebhook(env, url) {
-  return tgCall(env, "setWebhook", {
-    url: url,
-    secret_token: env.WEBHOOK_SECRET,
-    allowed_updates: ["message", "callback_query", "poll_answer"],
-  });
+  return tgCall(env, "setWebhook", { url, allowed_updates: ["message", "callback_query", "poll_answer"] });
 }
 
-// ============================================================================
-// ================= D1 BAZA BILAN ISHLASH FUNKSIYALARI =================
-// ============================================================================
 async function getUser(env, telegramId) {
   return (await env.DB.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(telegramId).first()) || null;
 }
@@ -221,9 +200,7 @@ async function getUser(env, telegramId) {
 async function ensureUser(env, telegramId) {
   let user = await getUser(env, telegramId);
   if (!user) {
-    await env.DB.prepare(
-      "INSERT INTO users (telegram_id, registered, state, balance) VALUES (?, 0, 'reg_name', 0)"
-    ).bind(telegramId).run();
+    await env.DB.prepare("INSERT INTO users (telegram_id, registered, state, balance) VALUES (?, 0, 'reg_name', 0)").bind(telegramId).run();
     user = await getUser(env, telegramId);
   } else {
     await env.DB.prepare("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE telegram_id = ?").bind(telegramId).run();
@@ -237,8 +214,7 @@ async function setState(env, telegramId, state, stateData = null) {
 }
 
 function getStateData(user) {
-  try { return user.state_data ? JSON.parse(user.state_data) : {}; }
-  catch { return {}; }
+  try { return user.state_data ? JSON.parse(user.state_data) : {}; } catch { return {}; }
 }
 
 async function updateUserFields(env, telegramId, fields) {
@@ -255,21 +231,13 @@ async function isAdmin(env, telegramId) {
   return row ? row.role : null;
 }
 
-async function isWhitelisted(env, telegramId) {
-  if (String(telegramId) === String(env.OWNER_ID)) return true;
-  const row = await env.DB.prepare("SELECT is_whitelisted FROM users WHERE telegram_id = ? AND is_whitelisted = 1").bind(telegramId).first();
-  return !!row;
-}
-
 async function getSetting(env, key) {
   const row = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
   return row ? row.value : null;
 }
 
 async function setSetting(env, key, value) {
-  await env.DB.prepare(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-  ).bind(key, value).run();
+  await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(key, value).run();
 }
 
 async function isBotEnabled(env) {
@@ -288,8 +256,7 @@ async function getAllChannels(env) {
 }
 
 async function addChannel(env, chatId, title, type, addedBy) {
-  await env.DB.prepare("INSERT INTO channels (chat_id, title, type, added_by) VALUES (?, ?, ?, ?)")
-    .bind(String(chatId), title, type, addedBy).run();
+  await env.DB.prepare("INSERT INTO channels (chat_id, title, type, added_by) VALUES (?, ?, ?, ?)").bind(String(chatId), title, type, addedBy).run();
 }
 
 async function deleteChannelById(env, id) {
@@ -305,9 +272,7 @@ async function getTestById(env, id) {
 }
 
 async function getActiveTests(env) {
-  const { results } = await env.DB
-    .prepare("SELECT * FROM tests WHERE is_closed = 0 AND CURRENT_TIMESTAMP <= end_time ORDER BY start_time")
-    .all();
+  const { results } = await env.DB.prepare("SELECT * FROM tests WHERE is_closed = 0 AND CURRENT_TIMESTAMP <= end_time ORDER BY start_time").all();
   return results || [];
 }
 
@@ -317,9 +282,7 @@ async function getSubmission(env, testId, telegramId) {
 
 async function getRanking(env, testId) {
   const { results } = await env.DB.prepare(
-    `SELECT s.*, u.first_name, u.last_name, u.region, u.grade
-     FROM submissions s JOIN users u ON u.telegram_id = s.telegram_id
-     WHERE s.test_id = ? ORDER BY s.score DESC, s.submitted_at ASC`
+    `SELECT s.*, u.first_name, u.last_name, u.region, u.grade FROM submissions s JOIN users u ON u.telegram_id = s.telegram_id WHERE s.test_id = ? ORDER BY s.score DESC, s.submitted_at ASC`
   ).bind(testId).all();
   return results || [];
 }
@@ -339,16 +302,12 @@ async function getAllUserIds(env) {
   return (results || []).map((r) => r.telegram_id);
 }
 
-// Testni va unga bog'liq BARCHA ma'lumotlarni ildizi bilan tozalash
 async function deleteTestCascade(env, testId) {
   const test = await getTestById(env, testId);
   if (!test) return null;
-
-  // Baza kanalidagi faylni ham o'chirishga urinamiz
   if (test.base_chat_id && test.base_message_id) {
     try { await deleteMessage(env, test.base_chat_id, test.base_message_id); } catch (e) {}
   }
-
   await env.DB.batch([
     env.DB.prepare("DELETE FROM submissions WHERE test_id = ?").bind(testId),
     env.DB.prepare("DELETE FROM quiz_questions WHERE test_id = ?").bind(testId),
@@ -356,14 +315,12 @@ async function deleteTestCascade(env, testId) {
     env.DB.prepare("DELETE FROM test_sessions WHERE test_id = ?").bind(testId),
     env.DB.prepare("DELETE FROM tests WHERE id = ?").bind(testId),
   ]);
-
   return test;
 }
 
 async function checkSubscription(env, telegramId) {
   const required = await getChannels(env, "required");
   if (required.length === 0) return { ok: true, missing: [] };
-
   const missing = [];
   for (const ch of required) {
     try {
@@ -377,9 +334,6 @@ async function checkSubscription(env, telegramId) {
   return { ok: missing.length === 0, missing };
 }
 
-// ============================================================================
-// ================= KLAVIATURALAR =================
-// ============================================================================
 const REGIONS = [
   { code: "AND", name: "Andijon" }, { code: "BUX", name: "Buxoro" }, { code: "FAR", name: "Farg'ona" },
   { code: "JIZ", name: "Jizzax" }, { code: "XOR", name: "Xorazm" }, { code: "NAM", name: "Namangan" },
@@ -526,9 +480,6 @@ function channelUrl(chatId) {
   return "https://t.me/" + id.replace(/^-100/, "").replace(/^-/, "");
 }
 
-// ============================================================================
-// ================= YORDAMCHI FUNKSIYALAR (VAQT, HISOB-KITOB) =================
-// ============================================================================
 async function generateTestCode(env) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const code = String(Math.floor(1000 + Math.random() * 9000));
@@ -556,25 +507,12 @@ function formatDateTime(iso) {
   return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + " " + pad(d.getUTCDate()) + "." + pad(d.getUTCMonth() + 1) + "." + d.getUTCFullYear();
 }
 
-function minutesUntil(iso) {
-  return Math.round((new Date(iso).getTime() - Date.now()) / 60000);
-}
-
-function formatMinutes(mins) {
-  if (mins < 60) return mins + " daqiqa";
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return h + " soat " + m + " daqiqa";
-}
-
 function parseQuizBlock(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => l);
   if (lines.length < 3) return null;
-
   const question = lines[0];
   const options = [];
   let correctIndex = -1;
-
   for (let i = 1; i < lines.length; i++) {
     let opt = lines[i];
     if (opt.endsWith("+")) {
@@ -583,7 +521,6 @@ function parseQuizBlock(text) {
     }
     options.push(opt);
   }
-
   if (correctIndex === -1 || options.length < 2 || options.length > 10) return null;
   return { question, options, correctIndex };
 }
@@ -603,7 +540,6 @@ function scoreAnswers(userAnswers, key, points) {
   const k = key.toUpperCase();
   let score = 0, maxScore = 0, correctCount = 0;
   const wrongQuestions = [];
-
   for (let i = 0; i < k.length; i++) {
     const p = points[i] !== undefined ? points[i] : 1;
     maxScore += p;
@@ -621,13 +557,9 @@ function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// ============================================================================
-// ================= RO'YXATDAN O'TISH =================
-// ============================================================================
 async function handleRegistrationText(env, user, text) {
   const chatId = user.telegram_id;
   const t = text.trim();
-
   if (user.state === "reg_name") {
     if (t.length < 2) { await sendMessage(env, chatId, "❗️ Ismingizni to'liq kiriting:"); return; }
     await updateUserFields(env, chatId, { first_name: t });
@@ -635,7 +567,6 @@ async function handleRegistrationText(env, user, text) {
     await sendMessage(env, chatId, "Familiyangizni kiriting:");
     return;
   }
-
   if (user.state === "reg_lastname") {
     if (t.length < 2) { await sendMessage(env, chatId, "❗️ Familiyangizni to'liq kiriting:"); return; }
     await updateUserFields(env, chatId, { last_name: t });
@@ -643,7 +574,6 @@ async function handleRegistrationText(env, user, text) {
     await sendMessage(env, chatId, "Otasining ismini kiriting:");
     return;
   }
-
   if (user.state === "reg_fathername") {
     if (t.length < 2) { await sendMessage(env, chatId, "❗️ Otasining ismini to'liq kiriting:"); return; }
     await updateUserFields(env, chatId, { father_name: t });
@@ -655,7 +585,6 @@ async function handleRegistrationText(env, user, text) {
 
 async function handleRegistrationCallback(env, user, data) {
   const chatId = user.telegram_id;
-
   if (data.startsWith("reg:region:")) {
     const code = data.split(":")[2];
     await updateUserFields(env, chatId, { region: regionNameByCode(code) });
@@ -663,7 +592,6 @@ async function handleRegistrationCallback(env, user, data) {
     await sendMessage(env, chatId, "🎓 Ta'lim darajangizni tanlang:", levelKeyboard());
     return true;
   }
-
   if (data.startsWith("reg:level:")) {
     const level = data.split(":")[2];
     await updateUserFields(env, chatId, { level });
@@ -672,20 +600,15 @@ async function handleRegistrationCallback(env, user, data) {
     else await sendMessage(env, chatId, "📚 Necha kursda o'qiysiz?", courseKeyboard());
     return true;
   }
-
   if (data.startsWith("reg:grade:")) {
     const grade = data.split(":")[2];
     await updateUserFields(env, chatId, { grade, registered: 1, state: null, state_data: null });
     await sendMessage(env, chatId, "✅ Ro'yxatdan muvaffaqiyatli o'tdingiz!\n\nEndi quyidagi menyudan foydalanishingiz mumkin 👇", studentMainMenu());
     return true;
   }
-
   return false;
 }
 
-// ============================================================================
-// ================= PROFIL =================
-// ============================================================================
 async function handleProfileCallback(env, user, data) {
   const chatId = user.telegram_id;
   if (data === "profile:name") { await setState(env, chatId, "profile_edit_name"); await sendMessage(env, chatId, "Yangi ismingizni kiriting:", cancelKeyboard()); return true; }
@@ -697,14 +620,12 @@ async function handleProfileCallback(env, user, data) {
 
 async function handleProfileEditCallback(env, user, data) {
   const chatId = user.telegram_id;
-
   if (user.state === "profile_edit_region" && data.startsWith("reg:region:")) {
     const code = data.split(":")[2];
     await updateUserFields(env, chatId, { region: regionNameByCode(code), state: null, state_data: null });
     await sendMessage(env, chatId, "✅ Hudud yangilandi.", studentMainMenu());
     return true;
   }
-
   if (user.state === "profile_edit_level" && data.startsWith("reg:level:")) {
     const level = data.split(":")[2];
     await updateUserFields(env, chatId, { level });
@@ -713,21 +634,18 @@ async function handleProfileEditCallback(env, user, data) {
     else await sendMessage(env, chatId, "Kursingizni tanlang:", courseKeyboard());
     return true;
   }
-
   if (user.state === "profile_edit_grade" && data.startsWith("reg:grade:")) {
     const grade = data.split(":")[2];
     await updateUserFields(env, chatId, { grade, state: null, state_data: null });
     await sendMessage(env, chatId, "✅ Sinf/kurs yangilandi.", studentMainMenu());
     return true;
   }
-
   return false;
 }
 
 async function handleProfileEditText(env, user, text) {
   const chatId = user.telegram_id;
   const t = text.trim();
-
   if (user.state === "profile_edit_name") {
     if (t.length < 2) { await sendMessage(env, chatId, "❗️ To'liq kiriting:", cancelKeyboard()); return true; }
     await updateUserFields(env, chatId, { first_name: t, state: null, state_data: null });
@@ -743,16 +661,12 @@ async function handleProfileEditText(env, user, text) {
   return false;
 }
 
-// ============================================================================
-// ================= REYTING =================
-// ============================================================================
 async function showGeneralRating(env, chatId) {
   const { results } = await env.DB.prepare(
     `SELECT u.telegram_id, u.first_name, u.last_name, SUM(s.score) as total_score
      FROM submissions s JOIN users u ON u.telegram_id = s.telegram_id
      GROUP BY u.telegram_id ORDER BY total_score DESC LIMIT 10`
   ).all();
-
   let msg = "🌍 <b>Umumiy TOP-10 reyting (barcha testlar bo'yicha):</b>\n\n";
   if (!results || results.length === 0) {
     msg += "Hali reyting shakllanmagan.";
@@ -762,7 +676,6 @@ async function showGeneralRating(env, chatId) {
       msg += `${medal} ${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)} — <b>${r.total_score} ball</b>\n`;
     });
   }
-
   const myScore = await env.DB.prepare("SELECT SUM(score) as s FROM submissions WHERE telegram_id = ?").bind(chatId).first();
   msg += `\n🏅 Sizning umumiy to'plagan ballingiz: <b>${myScore && myScore.s ? myScore.s : 0}</b>`;
   await sendMessage(env, chatId, msg, studentMainMenu());
@@ -771,7 +684,6 @@ async function showGeneralRating(env, chatId) {
 async function showTestRanking(env, chatId, testCode, viewerIsAdmin = false) {
   const test = await getTestByCode(env, testCode);
   if (!test) { await sendMessage(env, chatId, "❌ Bunday kodli test topilmadi.", viewerIsAdmin ? undefined : studentMainMenu()); return; }
-
   const ranking = await getRanking(env, test.id);
   let msg = `🏆 <b>"${escapeHtml(test.subject || test.code)}"</b> testi reytingi:\n\n`;
   if (ranking.length === 0) {
@@ -789,9 +701,6 @@ async function showTestRanking(env, chatId, testCode, viewerIsAdmin = false) {
   await sendMessage(env, chatId, msg, viewerIsAdmin ? undefined : studentMainMenu());
 }
 
-// ============================================================================
-// ================= ASOSIY MENYU (O'QUVCHI) =================
-// ============================================================================
 async function handleMainMenuText(env, user, text) {
   const chatId = user.telegram_id;
   const t = text.trim();
@@ -837,16 +746,11 @@ async function handleMainMenuText(env, user, text) {
   return false;
 }
 
-// ============================================================================
-// ================= TEST VA VIKTORINANI ISHLASH =================
-// ============================================================================
 async function checkTestTimer(env, testId, telegramId) {
   const test = await env.DB.prepare("SELECT timer FROM tests WHERE id = ?").bind(testId).first();
   if (!test || !test.timer) return true;
-
   const session = await env.DB.prepare("SELECT started_at FROM test_sessions WHERE test_id = ? AND telegram_id = ?").bind(testId, telegramId).first();
   if (!session) return true;
-
   const elapsedMinutes = (Date.now() - new Date(session.started_at + "Z").getTime()) / 60000;
   return elapsedMinutes <= test.timer;
 }
@@ -880,7 +784,6 @@ async function handleTestCode(env, user, code) {
     return;
   }
 
-  // 💰 To'lovni tekshirish
   if (test.price > 0) {
     if ((user.balance || 0) < test.price) {
       await sendMessage(env, chatId, `❗️ Bu test pullik. Test narxi: <b>${test.price} so'm</b>.\nSizning hisobingizda <b>${user.balance || 0} so'm</b> mavjud.\n\nIltimos, "💰 Hisobim" bo'limi orqali hisobingizni to'ldiring.`, studentMainMenu());
@@ -891,7 +794,6 @@ async function handleTestCode(env, user, code) {
     await sendMessage(env, chatId, `💸 Hisobingizdan test uchun ${test.price} so'm yechib olindi.`);
   }
 
-  // ⏱ Shaxsiy taymerni boshlash
   await env.DB.prepare(
     "INSERT INTO test_sessions (test_id, telegram_id) VALUES (?, ?) ON CONFLICT(test_id, telegram_id) DO UPDATE SET started_at = CURRENT_TIMESTAMP, reminded = 0"
   ).bind(test.id, chatId).run();
@@ -910,37 +812,30 @@ async function handleTestCode(env, user, code) {
 async function sendNextQuizQuestion(env, chatId, testId) {
   const test = await getTestById(env, testId);
   const now = new Date();
-
   const isTimeOk = await checkTestTimer(env, testId, chatId);
   if (!isTimeOk || (test && now > new Date(test.end_time))) {
     await finishQuizTest(env, chatId, testId, true);
     return;
   }
-
   const questions = await env.DB.prepare("SELECT * FROM quiz_questions WHERE test_id = ? ORDER BY id ASC").bind(testId).all();
   const answered = await env.DB.prepare("SELECT question_id FROM user_polls WHERE test_id = ? AND telegram_id = ?").bind(testId, chatId).all();
   const answeredIds = (answered.results || []).map((r) => r.question_id);
-
   const allQuestions = questions.results || [];
   const nextQ = allQuestions.find((q) => !answeredIds.includes(q.id));
-
   if (!nextQ) {
     await finishQuizTest(env, chatId, testId, false);
     return;
   }
-
   const questionNumber = answeredIds.length + 1;
   const totalQuestions = allQuestions.length;
   const options = JSON.parse(nextQ.options);
   const shuffled = shuffleQuizOptions(options, nextQ.correct_index);
-
   const res = await sendPoll(
     env, chatId,
     `(${questionNumber}/${totalQuestions}) ${nextQ.question}`,
     shuffled.shuffledOptions, shuffled.newCorrectIndex,
     { reply_markup: cancelKeyboard() }
   );
-
   if (res.ok) {
     await env.DB.prepare(
       `INSERT INTO user_polls (poll_id, test_id, telegram_id, question_id, question_number, correct_option_id, answered)
@@ -953,42 +848,32 @@ async function handlePollAnswer(env, pollAnswer) {
   const pollId = pollAnswer.poll_id;
   const userId = pollAnswer.user.id;
   const selected = Array.isArray(pollAnswer.option_ids) && pollAnswer.option_ids.length > 0 ? pollAnswer.option_ids[0] : null;
-
   const pollData = await env.DB.prepare("SELECT * FROM user_polls WHERE poll_id = ?").bind(pollId).first();
   if (!pollData || pollData.answered) return;
-
   const isCorrect = selected !== null && selected === pollData.correct_option_id ? 1 : 0;
   await env.DB.prepare("UPDATE user_polls SET answered = 1, selected_option_id = ?, is_correct = ? WHERE poll_id = ?")
     .bind(selected, isCorrect, pollId).run();
-
   const isTimeOk = await checkTestTimer(env, pollData.test_id, userId);
   if (!isTimeOk) { await finishQuizTest(env, userId, pollData.test_id, true); return; }
-
   const existing = await getSubmission(env, pollData.test_id, userId);
   if (existing) return;
-
   await sendNextQuizQuestion(env, userId, pollData.test_id);
 }
 
 async function finishQuizTest(env, telegramId, testId, timeout = false) {
   const existing = await getSubmission(env, testId, telegramId);
   if (existing) return;
-
   const test = await getTestById(env, testId);
   if (!test) return;
-
   const points = JSON.parse(test.points || "[]");
   const totalQuestions = points.length;
-
   const { results: polls } = await env.DB.prepare(
     "SELECT * FROM user_polls WHERE test_id = ? AND telegram_id = ? ORDER BY question_number ASC"
   ).bind(testId, telegramId).all();
-
   let correctCount = 0, score = 0;
   const wrongQuestions = [];
   const pollByNumber = {};
   (polls || []).forEach((p) => { pollByNumber[p.question_number] = p; });
-
   for (let i = 0; i < totalQuestions; i++) {
     const qNum = i + 1;
     const p = pollByNumber[qNum];
@@ -996,18 +881,12 @@ async function finishQuizTest(env, telegramId, testId, timeout = false) {
     if (p && p.is_correct) { correctCount++; score += pts; }
     else wrongQuestions.push(qNum);
   }
-
   const maxScore = points.reduce((a, b) => a + b, 0);
-
   await env.DB.prepare(
     `INSERT INTO submissions (test_id, telegram_id, answers, correct_count, total_count, score, max_score, wrong_questions)
      VALUES (?, ?, 'QUIZ', ?, ?, ?, ?, ?)`
   ).bind(testId, telegramId, correctCount, totalQuestions, score, maxScore, JSON.stringify(wrongQuestions)).run();
-
-  const prefix = timeout
-    ? "⏰ <b>Vaqt tugadi!</b> Viktorina yakunlandi."
-    : "🎉 <b>Viktorina yakunlandi!</b> Barcha savollarga javob berdingiz.";
-
+  const prefix = timeout ? "⏰ <b>Vaqt tugadi!</b> Viktorina yakunlandi." : "🎉 <b>Viktorina yakunlandi!</b> Barcha savollarga javob berdingiz.";
   await sendResultAndChannel(env, telegramId, testId, correctCount, totalQuestions, score, maxScore, wrongQuestions, prefix);
 }
 
@@ -1015,14 +894,12 @@ async function handleAnswerSubmission(env, user, testId, answerText) {
   const chatId = user.telegram_id;
   const test = await getTestById(env, testId);
   if (!test) { await setState(env, chatId, null); return; }
-
   const isTimeOk = await checkTestTimer(env, testId, chatId);
   if (!isTimeOk) {
     await sendMessage(env, chatId, "⏰ <b>Vaqt tugadi!</b> Shaxsiy taymeringiz yakuniga yetdi. Javoblar qabul qilinmadi.", studentMainMenu());
     await setState(env, chatId, null);
     return;
   }
-
   const now = new Date();
   const end = new Date(test.end_time);
   if (test.is_closed || now > end) {
@@ -1030,22 +907,17 @@ async function handleAnswerSubmission(env, user, testId, answerText) {
     await setState(env, chatId, null);
     return;
   }
-
   const existing = await getSubmission(env, testId, chatId);
   if (existing) { await sendMessage(env, chatId, "⚠️ Siz allaqachon javob yubordingiz.", studentMainMenu()); await setState(env, chatId, null); return; }
-
   const cleaned = answerText.replace(/[^a-zA-Z]/g, "");
   if (cleaned.length === 0) { await sendMessage(env, chatId, "❗️ Iltimos, javoblarni harflar bilan yuboring (masalan: abcd...):", cancelKeyboard()); return; }
-
   const points = JSON.parse(test.points || "[]");
   const result = scoreAnswers(cleaned, test.answer_key, points);
-
   await env.DB.prepare(
     `INSERT INTO submissions (test_id, telegram_id, answers, correct_count, total_count, score, max_score, wrong_questions)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(testId, chatId, cleaned.toUpperCase(), result.correctCount, result.total, result.score, result.maxScore, JSON.stringify(result.wrongQuestions)).run();
   await setState(env, chatId, null);
-
   await sendResultAndChannel(env, chatId, testId, result.correctCount, result.total, result.score, result.maxScore, result.wrongQuestions);
 }
 
@@ -1056,10 +928,8 @@ async function sendResultAndChannel(env, telegramId, testId, correctCount, total
   const place = ranking.findIndex((r) => r.telegram_id === telegramId) + 1;
   const percent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
   const wrongList = wrongQuestions.length > 0 ? wrongQuestions.join(", ") : "yo'q 🎉";
-
-  const studentMsg = `${prefix}\n\n📊 Ball: <b>${score} / ${maxScore}</b> (${percent}%)\n✔️ To'g'ri javoblar: ${correctCount} / ${total}\n❌ Xato savollar: ${wrongList}\n🏆 Reyting: <b>${place}-o'rin</b> (${ranking.length} qatnashuvchidan)`;
+  const studentMsg = `${prefix}\n\n📊 Ball: <b>${score} / ${maxScore}</b> (${percent}%)\n✔️ To'g'ri javoblar: ${correctCount} / ${total}\n❌ Xato javob berilgan savollar: ${wrongList}\n🏆 Reyting: <b>${place}-o'rin</b> (${ranking.length} qatnashuvchidan)`;
   await sendMessage(env, telegramId, studentMsg, studentMainMenu());
-
   const resultsChannels = await getChannels(env, "results");
   if (resultsChannels.length > 0) {
     const channelMsg = `🆕 <b>Yangi natija</b>\n👤 ${escapeHtml(user.first_name)} ${escapeHtml(user.last_name)}\n🌍 ${escapeHtml(user.region)} | ${escapeHtml(user.grade)}\n📘 Test: ${escapeHtml(test.subject || test.code)} [${test.is_quiz ? "🎮 Viktorina" : "📄 Oddiy"}]\n📊 Ball: ${score}/${maxScore} (${percent}%)\n🏆 O'rin: ${place}\n🕒 ${formatDateTime(new Date().toISOString())}`;
@@ -1067,9 +937,6 @@ async function sendResultAndChannel(env, telegramId, testId, correctCount, total
   }
 }
 
-// ============================================================================
-// ================= ADMIN PANEL =================
-// ============================================================================
 async function showAdminMenu(env, chatId, role) {
   const enabled = await isBotEnabled(env);
   await sendMessage(env, chatId, "👑 <b>Admin panel</b>\n\nKerakli bo'limni tanlang:", adminMenuKeyboard(role, enabled));
@@ -1077,9 +944,7 @@ async function showAdminMenu(env, chatId, role) {
 
 async function handleAdminCallback(env, user, data, role) {
   const chatId = user.telegram_id;
-
   if (data === "admin:back") { await showAdminMenu(env, chatId, role); return true; }
-
   if (data === "admin:stats") {
     const total = await countUsers(env);
     const today = await countUsersToday(env);
@@ -1092,16 +957,13 @@ async function handleAdminCallback(env, user, data, role) {
       adminMenuKeyboard(role, enabled));
     return true;
   }
-
-  // ---------- Test yaratish ----------
   if (data === "admin:addtest") {
     const baseChannels = await getChannels(env, "base");
-    if (baseChannels.length === 0) { await sendMessage(env, chatId, "⚠️ Avval Baza kanali belgilanishi kerak. Owner administratordan so'rang."); return true; }
+    if (baseChannels.length === 0) { await sendMessage(env, chatId, "⚠️ Avval Baza kanali belgilanishi kerak."); return true; }
     await setState(env, chatId, "admin_awaiting_file");
-    await sendMessage(env, chatId, `📤 Oddiy test faylini (PDF yoki rasm ko'rinishida) shu yerga — <b>botga to'g'ridan-to'g'ri</b> yuboring.\nBot uni o'zi <b>${escapeHtml(baseChannels[0].title || baseChannels[0].chat_id)}</b> kanaliga joylab qo'yadi.`, cancelKeyboard());
+    await sendMessage(env, chatId, `📤 Oddiy test faylini (PDF yoki rasm) botga yuboring. Bot uni o'zi Baza kanaliga joylaydi.`, cancelKeyboard());
     return true;
   }
-
   if (data === "admin:addquiz") {
     const code = await generateTestCode(env);
     const res = await env.DB.prepare(
@@ -1109,18 +971,15 @@ async function handleAdminCallback(env, user, data, role) {
        VALUES (?, '', 'quiz', ?, datetime('now'), datetime('now'), '', '[]', 1, 1)`
     ).bind(code, chatId).run();
     await setState(env, chatId, "admin_quiz_subject", { testId: res.meta.last_row_id });
-    await sendMessage(env, chatId, `🎮 Yangi Viktorina yaratilmoqda. Maxsus kod: <b>${code}</b>\n\nViktorina fani/mavzusini kiriting:`, cancelKeyboard());
+    await sendMessage(env, chatId, `🎮 Viktorina yaratilmoqda. Kod: <b>${code}</b>\n\nViktorina fani/mavzusini kiriting:`, cancelKeyboard());
     return true;
   }
-
   if (data === "admin:mytests") {
     const query = role === "owner"
       ? env.DB.prepare("SELECT * FROM tests ORDER BY created_at DESC LIMIT 15")
       : env.DB.prepare("SELECT * FROM tests WHERE created_by = ? ORDER BY created_at DESC LIMIT 15").bind(chatId);
     const { results } = await query.all();
-    if (!results || results.length === 0) { await sendMessage(env, chatId, "Hozircha testlar mavjud emas.", adminMenuKeyboard(role, await isBotEnabled(env))); return true; }
-
-    await sendMessage(env, chatId, `📋 <b>${role === "owner" ? "Barcha testlar" : "Sizning testlaringiz"}:</b>`);
+    if (!results || results.length === 0) { await sendMessage(env, chatId, "Testlar mavjud emas.", adminMenuKeyboard(role, await isBotEnabled(env))); return true; }
     for (const t of results) {
       const subCount = await env.DB.prepare("SELECT COUNT(*) as c FROM submissions WHERE test_id = ?").bind(t.id).first();
       const msg = `📘 <b>${escapeHtml(t.subject || "Test")}</b> [${t.is_quiz ? "🎮 Quiz" : "📄 Oddiy"}]\n🔑 Kodi: <b>${t.code}</b>\n💰 Narxi: ${t.price || 0} so'm\n⏱ Taymer: ${t.timer ? t.timer + " daqiqa" : "Yo'q"}\n⏰ ${formatDateTime(t.start_time)} — ${formatDateTime(t.end_time)}\n✍️ Ishlaganlar: ${subCount.c}\n📌 Holati: ${t.is_closed ? "🔴 Yopiq" : "🟢 Faol"}`;
@@ -1128,35 +987,30 @@ async function handleAdminCallback(env, user, data, role) {
     }
     return true;
   }
-
-  // ---------- Testni tahrirlash / yakunlash / o'chirish ----------
   if (data.startsWith("test:edit:subject:")) {
     const testId = data.split(":")[3];
     const t = await getTestById(env, testId);
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Huquq yo'q."); return true; }
     await setState(env, chatId, `admin_edit_subject:${testId}`);
     await sendMessage(env, chatId, "Yangi fani/mavzusini kiriting:", cancelKeyboard());
     return true;
   }
-
   if (data.startsWith("test:edit:price:")) {
     const testId = data.split(":")[3];
     const t = await getTestById(env, testId);
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Huquq yo'q."); return true; }
     await setState(env, chatId, `admin_edit_price:${testId}`);
     await sendMessage(env, chatId, "Yangi narxni kiriting (Bepul bo'lsa 0):", cancelKeyboard());
     return true;
   }
-
   if (data.startsWith("test:edit:key:")) {
     const testId = data.split(":")[3];
     const t = await getTestById(env, testId);
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Huquq yo'q."); return true; }
     await setState(env, chatId, `admin_edit_key:${testId}`);
     await sendMessage(env, chatId, "Yangi javoblar kalitini kiriting (Masalan: ABCD...):", cancelKeyboard());
     return true;
   }
-
   if (data.startsWith("test:rank:")) {
     const testId = data.split(":")[2];
     const t = await getTestById(env, testId);
@@ -1164,145 +1018,109 @@ async function handleAdminCallback(env, user, data, role) {
     await showTestRanking(env, chatId, t.code, true);
     return true;
   }
-
   if (data.startsWith("test:finish:")) {
     const testId = data.split(":")[2];
     const t = await getTestById(env, testId);
-    if (!t) { await sendMessage(env, chatId, "❌ Test topilmadi."); return true; }
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!t || !(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "❌ Xatolik."); return true; }
     await adminFinishTest(env, testId);
-    await sendMessage(env, chatId, "✅ Test yakunlandi. Yakuniy reyting Natijalar kanaliga yuborildi.", adminMenuKeyboard(role, await isBotEnabled(env)));
+    await sendMessage(env, chatId, "✅ Test yakunlandi va Natijalar kanaliga yuborildi.", adminMenuKeyboard(role, await isBotEnabled(env)));
     return true;
   }
-
   if (data.startsWith("test:delete:")) {
     const testId = data.split(":")[2];
     const t = await getTestById(env, testId);
-    if (!t) { await sendMessage(env, chatId, "❌ Test topilmadi."); return true; }
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!t || !(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "❌ Xatolik."); return true; }
     await askDeleteConfirm(env, chatId, t);
     return true;
   }
-
   if (data.startsWith("test:delconfirm:")) {
     const testId = data.split(":")[2];
     const t = await getTestById(env, testId);
-    if (!t) { await sendMessage(env, chatId, "❌ Test allaqachon o'chirilgan."); return true; }
-    if (!(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "⛔️ Bu sizning testingiz emas."); return true; }
+    if (!t || !(await canManageTest(env, chatId, role, t))) { await sendMessage(env, chatId, "❌ Xatolik."); return true; }
     await deleteTestCascade(env, testId);
-    await sendMessage(env, chatId, "🗑 Test va unga bog'liq barcha ma'lumotlar (javoblar, savollar, sessiyalar) to'liq o'chirildi. Fayl Baza kanalidan ham olib tashlandi.", adminMenuKeyboard(role, await isBotEnabled(env)));
+    await sendMessage(env, chatId, "🗑 Test va unga bog'liq barcha ma'lumotlar o'chirildi.", adminMenuKeyboard(role, await isBotEnabled(env)));
     return true;
   }
-
   if (data === "admin:delbycode") {
     await setState(env, chatId, "admin_delete_by_code");
     await sendMessage(env, chatId, "🗑 O'chirmoqchi bo'lgan testning kodini kiriting:", cancelKeyboard());
     return true;
   }
-
   if (data.startsWith("addtest:points:")) {
     const mode = data.split(":")[2];
     const stateData = getStateData(user);
     if (mode === "equal") {
       await setState(env, chatId, "admin_test_points_equal", stateData);
-      await sendMessage(env, chatId, "Bitta savol uchun necha ball bermoqchisiz (masalan: 1):", cancelKeyboard());
+      await sendMessage(env, chatId, "Bitta savol uchun ball (masalan: 1):", cancelKeyboard());
     } else {
       await setState(env, chatId, "admin_test_points_custom", stateData);
       await sendMessage(env, chatId, "Ballarni vergul bilan kiriting (masalan: 1,2,1):", cancelKeyboard());
     }
     return true;
   }
-
-  // ---------- Faqat OWNER uchun bo'limlar ----------
   if (role !== "owner") return false;
-
-  if (data === "admin:channels") { await sendMessage(env, chatId, "📢 <b>Kanallarni boshqarish</b>", channelsMenuKeyboard()); return true; }
-
+  if (data === "admin:channels") { await sendMessage(env, chatId, "📢 Kanallar", channelsMenuKeyboard()); return true; }
   if (data.startsWith("chan:add:")) {
     const type = data.split(":")[2];
     await setState(env, chatId, "admin_channel_add", { type });
-    const typeName = type === "required" ? "Majburiy" : type === "base" ? "Baza" : "Natijalar";
-    await sendMessage(env, chatId,
-      `➕ <b>${typeName}</b> kanal qo'shish:\n\n1) Botni ushbu kanalga <b>administrator</b> qilib tayinlang.\n2) Kanaldan istalgan xabarni shu chatga <b>forward</b> qiling YOKI kanal <b>@username</b>'ini yuboring.`,
-      cancelKeyboard());
+    await sendMessage(env, chatId, "Kanalga botni admin qiling va kanal username (@kanal) yoki forward xabar yuboring:", cancelKeyboard());
     return true;
   }
-
   if (data === "chan:listall") {
     const all = await getAllChannels(env);
-    if (all.length === 0) { await sendMessage(env, chatId, "📋 Hozircha hech qanday kanal qo'shilmagan.", channelsMenuKeyboard()); return true; }
-
-    const typeNames = { required: "📢 Majburiy", base: "🗄 Baza", results: "🏆 Natijalar" };
-    const grouped = { required: [], base: [], results: [] };
-    all.forEach((c) => { if (grouped[c.type]) grouped[c.type].push(c); });
-
-    let msg = "📋 <b>Barcha kanallar:</b>\n\n";
+    if (all.length === 0) { await sendMessage(env, chatId, "Kanallar yo'q.", channelsMenuKeyboard()); return true; }
+    let msg = "📋 <b>Kanallar:</b>\n\n";
     const rows = [];
-    for (const type of ["required", "base", "results"]) {
-      msg += `<b>${typeNames[type]}:</b>\n`;
-      if (grouped[type].length === 0) msg += "— belgilanmagan —\n";
-      else grouped[type].forEach((c) => { msg += `• ${escapeHtml(c.title || c.chat_id)}\n`; rows.push([{ text: `🗑 ${c.title || c.chat_id}`, callback_data: `chan:del:${c.id}` }]); });
-      msg += "\n";
-    }
+    all.forEach((c) => {
+      msg += `• [${c.type}] ${escapeHtml(c.title || c.chat_id)}\n`;
+      rows.push([{ text: `🗑 O'chirish: ${c.title || c.chat_id}`, callback_data: `chan:del:${c.id}` }]);
+    });
     rows.push([{ text: "⬅️ Orqaga", callback_data: "admin:channels" }]);
     await sendMessage(env, chatId, msg, { inline_keyboard: rows });
     return true;
   }
-
   if (data.startsWith("chan:del:")) {
-    const id = data.split(":")[2];
-    await deleteChannelById(env, id);
-    await answerCallbackQuery(env, user.callback_query_id, "🗑 Kanal o'chirildi.");
-    await sendMessage(env, chatId, "✅ Kanal ro'yxatdan o'chirildi.", channelsMenuKeyboard());
+    await deleteChannelById(env, data.split(":")[2]);
+    await sendMessage(env, chatId, "✅ O'chirildi.", channelsMenuKeyboard());
     return true;
   }
-
   if (data === "admin:broadcast") {
     await setState(env, chatId, "admin_broadcast_waiting");
-    await sendMessage(env, chatId, "✉️ Barcha foydalanuvchilarga yuboriladigan xabar matnini kiriting:", cancelKeyboard());
+    await sendMessage(env, chatId, "✉️ Barchaga yuboriladigan xabar matnini kiriting:", cancelKeyboard());
     return true;
   }
-
   if (data === "admin:togglebot") {
     const current = await isBotEnabled(env);
     await setSetting(env, "bot_enabled", current ? "0" : "1");
-    const enabled = !current;
-    await sendMessage(env, chatId, enabled ? "🟢 Bot yoqildi. Foydalanuvchilar botdan foydalanishlari mumkin." : "🔴 Bot o'chirildi. Endi faqat siz botdan foydalana olasiz.", adminMenuKeyboard(role, enabled));
+    await sendMessage(env, chatId, !current ? "🟢 Bot yoqildi." : "🔴 Bot o'chirildi.", adminMenuKeyboard(role, !current));
     return true;
   }
-
   if (data === "admin:subadmins") {
     const { results } = await env.DB.prepare("SELECT * FROM admins WHERE role = 'admin'").all();
-    let msg = "👨‍🏫 <b>Sub-adminlar ro'yxati:</b>\n\n";
+    let msg = "👨‍🏫 <b>Sub-adminlar:</b>\n\n";
     const rows = [];
-    if (!results || results.length === 0) msg += "Hali sub-admin qo'shilmagan.";
-    else results.forEach((r) => { msg += `• ${escapeHtml(r.name) || r.telegram_id} (ID: <code>${r.telegram_id}</code>)\n`; rows.push([{ text: `🗑 O'chirish: ${r.telegram_id}`, callback_data: `subadmin:del:${r.telegram_id}` }]); });
-    msg += "\n\n➕ Yangi sub-admin qo'shish uchun uning Telegram ID raqamini yuboring:";
-    rows.push([{ text: "❌ Bekor qilish", callback_data: "cancel" }]);
+    if (!results || results.length === 0) msg += "Yo'q.";
+    else results.forEach((r) => { msg += `• ${r.telegram_id}\n`; rows.push([{ text: `🗑 O'chirish: ${r.telegram_id}`, callback_data: `subadmin:del:${r.telegram_id}` }]); });
+    rows.push([{ text: "❌ Bekor", callback_data: "cancel" }]);
     await setState(env, chatId, "admin_subadmin_add");
     await sendMessage(env, chatId, msg, { inline_keyboard: rows });
     return true;
   }
-
   if (data.startsWith("subadmin:del:")) {
-    const id = data.split(":")[2];
-    await env.DB.prepare("DELETE FROM admins WHERE telegram_id = ? AND role = 'admin'").bind(id).run();
-    await sendMessage(env, chatId, `✅ Sub-admin (ID: ${id}) o'chirildi.`, adminMenuKeyboard(role, await isBotEnabled(env)));
+    await env.DB.prepare("DELETE FROM admins WHERE telegram_id = ? AND role = 'admin'").bind(data.split(":")[2]).run();
+    await sendMessage(env, chatId, "✅ O'chirildi.", adminMenuKeyboard(role, await isBotEnabled(env)));
     return true;
   }
-
   if (data === "admin:setcard") {
     await setState(env, chatId, "admin_setcard");
-    await sendMessage(env, chatId, "💳 Karta raqamini va ism-sharifni kiriting:\n(Masalan: 8600 1234 5678 9012 - Palonchiyev P)", cancelKeyboard());
+    await sendMessage(env, chatId, "💳 Karta raqamini kiriting:", cancelKeyboard());
     return true;
   }
-
   if (data === "admin:addbalance") {
     await setState(env, chatId, "admin_addbalance_id");
-    await sendMessage(env, chatId, "💰 Pul qo'shmoqchi bo'lgan foydalanuvchi Telegram ID sini kiriting:", cancelKeyboard());
+    await sendMessage(env, chatId, "💰 Foydalanuvchi Telegram ID sini kiriting:", cancelKeyboard());
     return true;
   }
-
   return false;
 }
 
@@ -1313,59 +1131,45 @@ async function canManageTest(env, chatId, role, test) {
 }
 
 async function askDeleteConfirm(env, chatId, test) {
-  await sendMessage(env, chatId,
-    `⚠️ <b>Diqqat!</b> "${escapeHtml(test.subject || test.code)}" (kod: ${test.code}) testini butunlay o'chirmoqchimisiz?\n\nBarcha javoblar, savollar va sessiyalar qaytarib bo'lmas tarzda o'chiriladi, fayl Baza kanalidan ham olib tashlanadi.`,
-    { inline_keyboard: [[{ text: "✅ Ha, o'chirish", callback_data: `test:delconfirm:${test.id}` }, { text: "❌ Bekor qilish", callback_data: "cancel" }]] });
+  await sendMessage(env, chatId, `⚠️ Rostdan ham "${escapeHtml(test.subject || test.code)}" testini o'chirmoqchimisiz?`, {
+    inline_keyboard: [[{ text: "✅ Ha", callback_data: `test:delconfirm:${test.id}` }, { text: "❌ Yo'q", callback_data: "cancel" }]]
+  });
 }
 
 async function adminFinishTest(env, testId) {
   await env.DB.prepare("UPDATE tests SET is_closed = 1 WHERE id = ?").bind(testId).run();
   const test = await getTestById(env, testId);
   const ranking = await getRanking(env, testId);
-
   let msg = `🏁 <b>"${escapeHtml(test.subject || test.code)}"</b> testi yakunlandi!\n\n🏆 <b>Yakuniy Reyting:</b>\n`;
   if (ranking.length === 0) msg += "Hech kim ishlamadi.";
   else ranking.slice(0, 15).forEach((r, i) => {
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
     msg += `${medal} ${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)} — <b>${r.score}/${r.max_score}</b> ball\n`;
   });
-
   const resultsChannels = await getChannels(env, "results");
   for (const ch of resultsChannels) await sendMessage(env, ch.chat_id, msg);
 }
 
-// Test faylini Baza kanaliga joylash
 async function postTestFileToChannel(env, baseChatId, fileId, fileType, caption) {
-  const res = fileType === "photo"
-    ? await sendPhoto(env, baseChatId, fileId, caption)
-    : await sendDocument(env, baseChatId, fileId, caption);
+  const res = fileType === "photo" ? await sendPhoto(env, baseChatId, fileId, caption) : await sendDocument(env, baseChatId, fileId, caption);
   if (!res.ok) return null;
   return res.result.message_id;
 }
 
 async function handleIncomingTestFile(env, chatId, fileId, fileType) {
   const baseChannels = await getChannels(env, "base");
-  if (baseChannels.length === 0) {
-    await sendMessage(env, chatId, "⚠️ Baza kanali topilmadi. Owner administrator kanalni belgilashi kerak.");
-    return;
-  }
+  if (baseChannels.length === 0) { await sendMessage(env, chatId, "⚠️ Baza kanali topilmadi."); return; }
   const baseChannel = baseChannels[0];
   const code = await generateTestCode(env);
-  const caption = `🆕 <b>Yangi test yuklandi</b>\n🔑 Kodi: <b>${code}</b>`;
-
+  const caption = `🆕 <b>Yangi test</b>\n🔑 Kod: <b>${code}</b>`;
   const messageId = await postTestFileToChannel(env, baseChannel.chat_id, fileId, fileType, caption);
-  if (!messageId) {
-    await sendMessage(env, chatId, "❌ Faylni Baza kanaliga joylab bo'lmadi. Botni o'sha kanalga <b>administrator</b> qilib qo'yganingizni tekshiring va qayta urinib ko'ring.", cancelKeyboard());
-    return;
-  }
-
+  if (!messageId) { await sendMessage(env, chatId, "❌ Faylni Baza kanaliga joylab bo'lmadi. Bot adminligini tekshiring.", cancelKeyboard()); return; }
   const res = await env.DB.prepare(
     `INSERT INTO tests (code, file_id, file_type, base_chat_id, base_message_id, created_by, start_time, end_time, answer_key, points, is_quiz, is_closed)
      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), '', '[]', 0, 1)`
   ).bind(code, fileId, fileType, baseChannel.chat_id, messageId, chatId).run();
-
   await setState(env, chatId, "admin_test_subject", { testId: res.meta.last_row_id });
-  await sendMessage(env, chatId, `✅ Fayl <b>${escapeHtml(baseChannel.title || baseChannel.chat_id)}</b> kanaliga muvaffaqiyatli joylandi.\nTest kodi: <b>${code}</b>\n\nTestning fani/mavzusini kiriting:`, cancelKeyboard());
+  await sendMessage(env, chatId, `✅ Test fayli Baza kanaliga joylandi. Kod: <b>${code}</b>\n\nTest fani/mavzusini kiriting:`, cancelKeyboard());
 }
 
 async function handleChannelForward(env, chatId, forwardFromChat, type) {
@@ -1377,23 +1181,19 @@ async function handleChannelForward(env, chatId, forwardFromChat, type) {
   } catch (e) {}
   await addChannel(env, chatIdStr, title, type, chatId);
   await setState(env, chatId, null);
-  await sendMessage(env, chatId, `✅ Kanal muvaffaqiyatli qo'shildi: <b>${escapeHtml(title)}</b>`, channelsMenuKeyboard());
+  await sendMessage(env, chatId, `✅ Kanal qo'shildi: <b>${escapeHtml(title)}</b>`, channelsMenuKeyboard());
 }
 
-// ============================================================================
-// ================= ADMINNING MATNLI QADAMLARI =================
-// ============================================================================
 async function handleAddTestText(env, user, text) {
   const chatId = user.telegram_id;
   const data = getStateData(user);
   const t = text.trim();
 
-  // ---- Testni tahrirlash ----
   if (user.state && user.state.startsWith("admin_edit_subject:")) {
     const testId = user.state.split(":")[1];
     await env.DB.prepare("UPDATE tests SET subject = ? WHERE id = ?").bind(t, testId).run();
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, "✅ Test nomi yangilandi!", adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
+    await sendMessage(env, chatId, "✅ Nom o'zgartirildi!", adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
     return true;
   }
   if (user.state && user.state.startsWith("admin_edit_price:")) {
@@ -1401,137 +1201,108 @@ async function handleAddTestText(env, user, text) {
     const p = parseFloat(t.replace(",", ".").replace(/[^\d.]/g, "")) || 0;
     await env.DB.prepare("UPDATE tests SET price = ? WHERE id = ?").bind(p, testId).run();
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, "✅ Test narxi yangilandi!", adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
+    await sendMessage(env, chatId, "✅ Narx o'zgartirildi!", adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
     return true;
   }
   if (user.state && user.state.startsWith("admin_edit_key:")) {
     const testId = user.state.split(":")[1];
     const key = t.replace(/[^a-zA-Z]/g, "").toUpperCase();
-    if (!key) { await sendMessage(env, chatId, "❗️ Faqat harflardan iborat kalit kiriting:", cancelKeyboard()); return true; }
+    if (!key) { await sendMessage(env, chatId, "❗️ Harflar kiriting:", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET answer_key = ? WHERE id = ?").bind(key, testId).run();
     await setState(env, chatId, "admin_test_points_mode", { testId });
-    await sendMessage(env, chatId, "✅ Javoblar yangilandi. Endi yangi javoblarga ballarni belgilaymiz:", pointsModeKeyboard());
+    await sendMessage(env, chatId, "✅ Kalit saqlandi. Ballarni tanlang:", pointsModeKeyboard());
     return true;
   }
-
-  // ---- Testni kod orqali o'chirish ----
   if (user.state === "admin_delete_by_code") {
     const test = await getTestByCode(env, t);
-    if (!test) { await sendMessage(env, chatId, "❌ Bunday kodli test topilmadi. Qaytadan kiriting:", cancelKeyboard()); return true; }
+    if (!test) { await sendMessage(env, chatId, "❌ Topilmadi. Qaytadan kiriting:", cancelKeyboard()); return true; }
     const role = await isAdmin(env, chatId);
-    if (!(await canManageTest(env, chatId, role, test))) { await sendMessage(env, chatId, "⛔️ Bu boshqa administratorning testi, uni o'chira olmaysiz."); await setState(env, chatId, null); return true; }
+    if (!(await canManageTest(env, chatId, role, test))) { await sendMessage(env, chatId, "⛔️ Huquq yo'q."); await setState(env, chatId, null); return true; }
     await setState(env, chatId, null);
     await askDeleteConfirm(env, chatId, test);
     return true;
   }
-
-  // ---- Yangi test/viktorina yaratish jarayonlari ----
   if (user.state === "admin_test_subject" || user.state === "admin_quiz_subject") {
-    if (t.length < 2) { await sendMessage(env, chatId, "❗️ Nomni to'liqroq kiriting:", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET subject = ? WHERE id = ?").bind(t, data.testId).run();
     await setState(env, chatId, user.state.replace("subject", "start"), data);
-    await sendMessage(env, chatId, "⏰ Boshlanish vaqtini kiriting (KK.OO.YYYY SS:DD):\nMasalan: 25.07.2026 09:00", cancelKeyboard());
+    await sendMessage(env, chatId, "⏰ Boshlanish vaqti (KK.OO.YYYY SS:DD):", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_start" || user.state === "admin_quiz_start") {
     const iso = parseUserDateTime(t);
-    if (!iso) { await sendMessage(env, chatId, "❗️ Noto'g'ri format. KK.OO.YYYY SS:DD shaklida kiriting:", cancelKeyboard()); return true; }
+    if (!iso) { await sendMessage(env, chatId, "❗️ Xato format (KK.OO.YYYY SS:DD):", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET start_time = ? WHERE id = ?").bind(iso, data.testId).run();
     await setState(env, chatId, user.state.replace("start", "end"), data);
-    await sendMessage(env, chatId, "⏰ Tugash vaqtini kiriting (KK.OO.YYYY SS:DD):", cancelKeyboard());
+    await sendMessage(env, chatId, "⏰ Tugash vaqti (KK.OO.YYYY SS:DD):", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_end" || user.state === "admin_quiz_end") {
     const iso = parseUserDateTime(t);
-    if (!iso) { await sendMessage(env, chatId, "❗️ Noto'g'ri format. Qayta kiriting:", cancelKeyboard()); return true; }
-    const startTest = await getTestById(env, data.testId);
-    if (startTest && new Date(iso) <= new Date(startTest.start_time)) {
-      await sendMessage(env, chatId, "❗️ Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak. Qayta kiriting:", cancelKeyboard());
-      return true;
-    }
+    if (!iso) { await sendMessage(env, chatId, "❗️ Xato format:", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET end_time = ? WHERE id = ?").bind(iso, data.testId).run();
     await setState(env, chatId, user.state.replace("end", "timer"), data);
-    await sendMessage(env, chatId, "⏱ Shaxsiy taymer qancha bo'lsin (daqiqa)?\n(Taymer kerak bo'lmasa 0 deb yozing):", cancelKeyboard());
+    await sendMessage(env, chatId, "⏱ Taymer (daqiqa, yo'q bo'lsa 0):", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_timer" || user.state === "admin_quiz_timer") {
     const timer = parseInt(t, 10) || 0;
     await env.DB.prepare("UPDATE tests SET timer = ? WHERE id = ?").bind(timer, data.testId).run();
-
     if (user.state.includes("quiz")) {
       await setState(env, chatId, "admin_quiz_questions", data);
-      await sendMessage(env, chatId, "📝 Viktorina savollarini yuboring.\n\nFormat:\n<code>Savol matni\nJavob variant 1\nJavob variant 2+\nJavob variant 3</code>\n\nTo'g'ri javob oxiriga <b>+</b> belgisi qo'ying.\nBarcha savollarni yuborib bo'lgach, <b>Tugatish</b> deb yozing.", cancelKeyboard());
+      await sendMessage(env, chatId, "📝 Viktorina savollari:\nSavol\nVariant 1\nVariant 2+\nTugatish uchun 'Tugatish' deb yozing.", cancelKeyboard());
     } else {
       await setState(env, chatId, "admin_test_key", data);
-      await sendMessage(env, chatId, "🔑 Javoblar kalitini kiriting (ABCD...):", cancelKeyboard());
+      await sendMessage(env, chatId, "🔑 Kalit (ABCD...):", cancelKeyboard());
     }
     return true;
   }
-
   if (user.state === "admin_test_key") {
     const key = t.replace(/[^a-zA-Z]/g, "").toUpperCase();
-    if (!key) { await sendMessage(env, chatId, "❗️ Faqat harflardan iborat kalit kiriting:", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET answer_key = ? WHERE id = ?").bind(key, data.testId).run();
     await setState(env, chatId, "admin_test_points_mode", data);
-    await sendMessage(env, chatId, "Ballarni qanday belgilaymiz?", pointsModeKeyboard());
+    await sendMessage(env, chatId, "Ballarni tanlang:", pointsModeKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_points_equal") {
-    const val = parseFloat(t.replace(",", "."));
-    if (isNaN(val) || val <= 0) { await sendMessage(env, chatId, "❗️ Musbat son kiriting:", cancelKeyboard()); return true; }
+    const val = parseFloat(t.replace(",", ".")) || 1;
     const test = await getTestById(env, data.testId);
     const points = new Array(test.answer_key.length).fill(val);
     await env.DB.prepare("UPDATE tests SET points = ? WHERE id = ?").bind(JSON.stringify(points), data.testId).run();
     await setState(env, chatId, "admin_test_price", data);
-    await sendMessage(env, chatId, "💰 Bu test narxi qancha?\nBepul bo'lsa 0 deb yozing:", cancelKeyboard());
+    await sendMessage(env, chatId, "💰 Test narxi (bepul bo'lsa 0):", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_points_custom") {
     const test = await getTestById(env, data.testId);
     const points = t.split(",").map((x) => parseFloat(x.trim())).filter((x) => !isNaN(x));
-    if (points.length !== test.answer_key.length) { await sendMessage(env, chatId, `❗️ Ballar soni savollar soniga (${test.answer_key.length}) mos tushmadi. Qayta kiriting:`, cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE tests SET points = ? WHERE id = ?").bind(JSON.stringify(points), data.testId).run();
     await setState(env, chatId, "admin_test_price", data);
-    await sendMessage(env, chatId, "💰 Bu test narxi qancha?\nBepul bo'lsa 0 deb yozing:", cancelKeyboard());
+    await sendMessage(env, chatId, "💰 Test narxi (bepul bo'lsa 0):", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_quiz_questions") {
     if (t.toLowerCase() === "tugatish") {
       const qCount = await env.DB.prepare("SELECT COUNT(*) as c FROM quiz_questions WHERE test_id = ?").bind(data.testId).first();
-      if (!qCount || qCount.c === 0) { await sendMessage(env, chatId, "❗️ Kamida bitta savol qo'shishingiz kerak.", cancelKeyboard()); return true; }
       const points = new Array(qCount.c).fill(1);
       await env.DB.prepare("UPDATE tests SET points = ? WHERE id = ?").bind(JSON.stringify(points), data.testId).run();
       await setState(env, chatId, "admin_quiz_price", data);
-      await sendMessage(env, chatId, `✅ Qabul qilingan savollar: ${qCount.c} ta.\n\n💰 Bu test narxi qancha? (Bepul bo'lsa 0):`, cancelKeyboard());
+      await sendMessage(env, chatId, "💰 Test narxi (bepul bo'lsa 0):", cancelKeyboard());
       return true;
     }
     const qData = parseQuizBlock(t);
-    if (!qData) { await sendMessage(env, chatId, "❌ Format xato! To'g'ri javob oxiriga + qo'yishni unutmang. Yoki tugatgan bo'lsangiz \"Tugatish\" deb yozing.", cancelKeyboard()); return true; }
+    if (!qData) { await sendMessage(env, chatId, "❌ Format xato! Qayta yuboring yoki 'Tugatish' yozing.", cancelKeyboard()); return true; }
     await env.DB.prepare("INSERT INTO quiz_questions (test_id, question, options, correct_index) VALUES (?, ?, ?, ?)")
       .bind(data.testId, qData.question, JSON.stringify(qData.options), qData.correctIndex).run();
-    await sendMessage(env, chatId, "✅ Savol saqlandi. Keyingisini yuboring (yoki \"Tugatish\" deb yozing):", cancelKeyboard());
+    await sendMessage(env, chatId, "✅ Saqlandi. Keyingisi:", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_test_price" || user.state === "admin_quiz_price") {
     const price = parseFloat(t.replace(",", ".").replace(/[^\d.]/g, "")) || 0;
     await env.DB.prepare("UPDATE tests SET price = ?, is_closed = 0 WHERE id = ?").bind(price, data.testId).run();
-    const test = await getTestById(env, data.testId);
     await setState(env, chatId, null);
-    const pText = price > 0 ? `\n💰 Narxi: ${price} so'm` : "\n🎁 Bepul";
-    await sendMessage(env, chatId,
-      `🎉 <b>Test faollashtirildi!</b>\n\n📘 ${escapeHtml(test.subject)}\n🔑 Kod: <b>${test.code}</b>\n⏰ ${formatDateTime(test.start_time)} — ${formatDateTime(test.end_time)}${pText}`,
-      adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
+    await sendMessage(env, chatId, "🎉 Test faollashtirildi!", adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
     return true;
   }
-
-  // ---- Kanal qo'shish (matn orqali) ----
   if (user.state === "admin_channel_add" && (t.startsWith("@") || /^-?\d{5,}$/.test(t))) {
     let title = t;
     try {
@@ -1540,91 +1311,63 @@ async function handleAddTestText(env, user, text) {
     } catch (e) {}
     await addChannel(env, t, title, data.type, chatId);
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, `✅ Kanal muvaffaqiyatli qo'shildi: <b>${escapeHtml(title)}</b>`, channelsMenuKeyboard());
+    await sendMessage(env, chatId, `✅ Kanal qo'shildi: ${escapeHtml(title)}`, channelsMenuKeyboard());
     return true;
   }
-
-  // ---- Sub-admin qo'shish ----
   if (user.state === "admin_subadmin_add") {
     const id = parseInt(t.replace(/\D/g, ""), 10);
-    if (!id) { await sendMessage(env, chatId, "❗️ Faqat raqamlardan iborat Telegram ID kiriting:", cancelKeyboard()); return true; }
-    if (String(id) === String(env.OWNER_ID)) { await sendMessage(env, chatId, "❗️ Bu ID allaqachon Bosh administrator."); return true; }
     const targetUser = await getUser(env, id);
     await env.DB.prepare("INSERT INTO admins (telegram_id, role, name, added_by) VALUES (?, 'admin', ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET role='admin'")
-      .bind(id, targetUser ? `${targetUser.first_name || ""} ${targetUser.last_name || ""}`.trim() : null, chatId).run();
+      .bind(id, targetUser ? `${targetUser.first_name || ""}`.trim() : null, chatId).run();
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, `✅ Sub-admin qo'shildi (ID: ${id}).`, adminMenuKeyboard("owner", await isBotEnabled(env)));
-    try { await sendMessage(env, id, "🎉 Sizga bot boshqaruvida <b>Sub-admin</b> huquqi berildi!\n/admin buyrug'i orqali panelga kirishingiz mumkin."); } catch (e) {}
+    await sendMessage(env, chatId, `✅ Sub-admin qo'shildi.`, adminMenuKeyboard("owner", await isBotEnabled(env)));
     return true;
   }
-
-  // ---- Xabar tarqatish ----
   if (user.state === "admin_broadcast_waiting") {
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, "⏳ Xabar tarqatilmoqda, biroz kuting...");
+    await sendMessage(env, chatId, "⏳ Xabar tarqatilmoqda...");
     const ids = await getAllUserIds(env);
     let sent = 0, failed = 0;
-    const batchSize = 25;
-    for (let i = 0; i < ids.length; i += batchSize) {
-      const batch = ids.slice(i, i + batchSize);
-      const results = await Promise.allSettled(batch.map((id) => sendMessage(env, id, t)));
-      results.forEach((r) => {
-        if (r.status === "fulfilled" && r.value && r.value.ok) sent++;
-        else failed++;
-      });
+    for (const id of ids) {
+      const res = await sendMessage(env, id, t);
+      if (res && res.ok) sent++; else failed++;
     }
-    await sendMessage(env, chatId, `✅ <b>Xabar tarqatish yakunlandi!</b>\n\n👥 Jami foydalanuvchilar: ${ids.length}\n✔️ Yuborildi: ${sent}\n❌ Yuborilmadi: ${failed}`, adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
+    await sendMessage(env, chatId, `✅ Tugadi!\nYuborildi: ${sent}\nBormadi: ${failed}`, adminMenuKeyboard(await isAdmin(env, chatId), await isBotEnabled(env)));
     return true;
   }
-
   if (user.state === "admin_setcard") {
     await setSetting(env, "admin_card", t);
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, "✅ Karta ma'lumotlari muvaffaqiyatli saqlandi.", adminMenuKeyboard("owner", await isBotEnabled(env)));
+    await sendMessage(env, chatId, "✅ Karta saqlandi.", adminMenuKeyboard("owner", await isBotEnabled(env)));
     return true;
   }
-
   if (user.state === "admin_addbalance_id") {
     const targetId = parseInt(t.replace(/\D/g, ""), 10);
-    if (!targetId) { await sendMessage(env, chatId, "❗️ Noto'g'ri ID. Faqat raqam kiriting:", cancelKeyboard()); return true; }
-    const targetUser = await getUser(env, targetId);
-    if (!targetUser) { await sendMessage(env, chatId, "❗️ Bunday foydalanuvchi topilmadi. Qayta kiriting:", cancelKeyboard()); return true; }
     await setState(env, chatId, "admin_addbalance_amount", { targetId });
-    await sendMessage(env, chatId, `👤 Foydalanuvchi topildi: ${escapeHtml(targetUser.first_name)} ${escapeHtml(targetUser.last_name)}\n\nQancha summa qo'shmoqchisiz?`, cancelKeyboard());
+    await sendMessage(env, chatId, "Qancha summa qo'shasiz?", cancelKeyboard());
     return true;
   }
-
   if (user.state === "admin_addbalance_amount") {
     const amount = parseFloat(t.replace(/[^\d.]/g, ""));
-    if (!amount || amount <= 0) { await sendMessage(env, chatId, "❗️ Noto'g'ri summa. Qayta kiriting:", cancelKeyboard()); return true; }
     await env.DB.prepare("UPDATE users SET balance = balance + ? WHERE telegram_id = ?").bind(amount, data.targetId).run();
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, `✅ ID ${data.targetId} hisobiga ${amount} so'm qo'shildi.`, adminMenuKeyboard("owner", await isBotEnabled(env)));
-    try { await sendMessage(env, data.targetId, `🎉 <b>Hisobingiz to'ldirildi!</b>\n💰 Qo'shilgan summa: ${amount} so'm`); } catch (e) {}
+    await sendMessage(env, chatId, "✅ Balans to'ldirildi.", adminMenuKeyboard("owner", await isBotEnabled(env)));
     return true;
   }
-
-  // ---- O'quvchi pul o'tkazganini bildirganda ----
   if (user.state === "waiting_deposit_amount") {
     const amount = parseFloat(t.replace(/[^\d.]/g, ""));
-    if (!amount || amount <= 0) { await sendMessage(env, chatId, "❗️ Iltimos, faqat to'g'ri summa kiriting (masalan: 5000):", cancelKeyboard()); return true; }
     await setState(env, chatId, null);
-    await sendMessage(env, chatId, "⏳ So'rovingiz adminga yuborildi. To'lov tasdiqlangach hisobingiz to'ldiriladi.", studentMainMenu());
-    const adminMsg = `💵 <b>Yangi to'lov xabari!</b>\n\n👤 Foydalanuvchi: ${escapeHtml(user.first_name)} (ID: <code>${chatId}</code>)\n💰 Yuborgan summa: <b>${amount} so'm</b>\n\nKartani tekshirib, pul tushgan bo'lsa /admin → "Balans to'ldirish" orqali balansni to'ldiring.`;
-    try { await sendMessage(env, env.OWNER_ID, adminMsg); } catch (e) {}
+    await sendMessage(env, chatId, "⏳ Adminga yuborildi.", studentMainMenu());
+    try { await sendMessage(env, env.OWNER_ID, `💵 To'lov: ${amount} so'm\nID: ${chatId}`); } catch (e) {}
     return true;
   }
-
   return false;
 }
 
-// ============================================================================
-// ================= OBUNA GATE VA CANCEL =================
-// ============================================================================
 async function requireSubscription(env, chatId) {
   const sub = await checkSubscription(env, chatId);
   if (!sub.ok) {
-    await sendMessage(env, chatId, "📢 <b>Botdan foydalanish uchun quyidagi kanal(lar)ga a'zo bo'ling:</b>", subscriptionKeyboard(sub.missing));
+    await sendMessage(env, chatId, "📢 Botdan foydalanish uchun kanalga a'zo bo'ling:", subscriptionKeyboard(sub.missing));
     return false;
   }
   return true;
@@ -1633,20 +1376,12 @@ async function requireSubscription(env, chatId) {
 async function handleCancel(env, chatId) {
   await setState(env, chatId, null);
   const role = await isAdmin(env, chatId);
-  if (role) {
-    const enabled = await isBotEnabled(env);
-    await sendMessage(env, chatId, "❌ Amal bekor qilindi.", adminMenuKeyboard(role, enabled));
-  } else {
-    await sendMessage(env, chatId, "❌ Amal bekor qilindi.", studentMainMenu());
-  }
+  if (role) await sendMessage(env, chatId, "❌ Bekor qilindi.", adminMenuKeyboard(role, await isBotEnabled(env)));
+  else await sendMessage(env, chatId, "❌ Bekor qilindi.", studentMainMenu());
 }
 
-// ============================================================================
-// ================= ASOSIY EVENT ROUTER =================
-// ============================================================================
 async function handleUpdate(update, env) {
   try {
-    // ---- Global On/Off blokator ----
     let earlyChatId = null;
     if (update.message) earlyChatId = update.message.chat.id;
     else if (update.callback_query) earlyChatId = update.callback_query.from.id;
@@ -1654,19 +1389,14 @@ async function handleUpdate(update, env) {
     if (earlyChatId !== null) {
       const enabled = await isBotEnabled(env);
       if (!enabled && String(earlyChatId) !== String(env.OWNER_ID)) {
-        if (update.callback_query) await answerCallbackQuery(env, update.callback_query.id, "🛠 Bot vaqtincha o'chirilgan.", true);
-        else await sendMessage(env, earlyChatId, "🛠 <b>Bot vaqtincha texnik ishlar tufayli o'chirilgan.</b>\n\nIltimos, keyinroq qayta urinib ko'ring.");
+        if (update.callback_query) await answerCallbackQuery(env, update.callback_query.id, "🛠 Bot o'chirilgan.", true);
+        else await sendMessage(env, earlyChatId, "🛠 Bot o'chirilgan.");
         return;
       }
     }
 
-    // ---- Viktorina javoblari ----
-    if (update.poll_answer) {
-      await handlePollAnswer(env, update.poll_answer);
-      return;
-    }
+    if (update.poll_answer) { await handlePollAnswer(env, update.poll_answer); return; }
 
-    // ---- Tugmalar bosilganda ----
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.from.id;
@@ -1675,35 +1405,28 @@ async function handleUpdate(update, env) {
       user.callback_query_id = cb.id;
 
       if (cb.data === "cancel") { await handleCancel(env, chatId); return; }
-
       if (cb.data.startsWith("reg:")) {
         if (user.state && user.state.startsWith("profile_edit_")) await handleProfileEditCallback(env, user, cb.data);
         else await handleRegistrationCallback(env, user, cb.data);
         return;
       }
-
       if (cb.data === "check_sub") {
         const sub = await checkSubscription(env, chatId);
-        if (!sub.ok) { await answerCallbackQuery(env, cb.id, "❗️ Siz hali barcha kanallarga a'zo bo'lmagansiz!", true); return; }
-        await sendMessage(env, chatId, "✅ Tabriklaymiz! Endi botdan to'liq foydalanishingiz mumkin.", studentMainMenu());
+        if (!sub.ok) { await answerCallbackQuery(env, cb.id, "❗️ Hali a'zo bo'lmadingiz!", true); return; }
+        await sendMessage(env, chatId, "✅ Rahmat!", studentMainMenu());
         return;
       }
 
       const role = await isAdmin(env, chatId);
-      if (!role) {
-        const ok = await requireSubscription(env, chatId);
-        if (!ok) return;
-      }
+      if (!role && !(await requireSubscription(env, chatId))) return;
 
       if (cb.data.startsWith("profile:")) { await handleProfileCallback(env, user, cb.data); return; }
-
       if (cb.data === "rating:general") { await showGeneralRating(env, chatId); return; }
       if (cb.data === "rating:bycode") {
         await setState(env, chatId, "waiting_rating_code");
-        await sendMessage(env, chatId, "🔑 Reytingini ko'rmoqchi bo'lgan testning kodini kiriting:", cancelKeyboard());
+        await sendMessage(env, chatId, "🔑 Test kodini kiriting:", cancelKeyboard());
         return;
       }
-
       if (role && (cb.data.startsWith("admin:") || cb.data.startsWith("addtest:") || cb.data.startsWith("chan:") || cb.data.startsWith("test:") || cb.data.startsWith("subadmin:"))) {
         await handleAdminCallback(env, user, cb.data, role);
         return;
@@ -1711,28 +1434,19 @@ async function handleUpdate(update, env) {
       return;
     }
 
-    // ---- Shaxsiy xabarlar ----
     if (update.message && update.message.chat.type === "private") {
       const msg = update.message;
       const chatId = msg.chat.id;
       const text = msg.text || "";
-
-      let user = await ensureUser(env, chatId);
+      const user = await ensureUser(env, chatId);
       const role = await isAdmin(env, chatId);
 
-      // Test faylini bevosita botga yuborish (admin)
       if (role && user.state === "admin_awaiting_file" && (msg.document || msg.photo)) {
         const fileId = msg.document ? msg.document.file_id : msg.photo[msg.photo.length - 1].file_id;
         const fileType = msg.document ? "document" : "photo";
         await handleIncomingTestFile(env, chatId, fileId, fileType);
         return;
       }
-      if (role && user.state === "admin_awaiting_file" && !msg.document && !msg.photo) {
-        await sendMessage(env, chatId, "❗️ Iltimos, faqat PDF yoki rasm ko'rinishidagi test faylini yuboring.", cancelKeyboard());
-        return;
-      }
-
-      // Kanal qo'shish (forward orqali)
       if (role && user.state === "admin_channel_add" && msg.forward_from_chat) {
         await handleChannelForward(env, chatId, msg.forward_from_chat, getStateData(user).type);
         return;
@@ -1740,133 +1454,69 @@ async function handleUpdate(update, env) {
 
       if (text === "/start") {
         if (user.registered) {
-          if (!role) { const ok = await requireSubscription(env, chatId); if (!ok) return; }
+          if (!role && !(await requireSubscription(env, chatId))) return;
           await sendMessage(env, chatId, "🏠 Bosh menyu:", studentMainMenu());
         } else {
           await setState(env, chatId, "reg_name");
-          await sendMessage(env, chatId, "👋 Assalomu alaykum! Botga xush kelibsiz.\n\nRo'yxatdan o'tish uchun ismingizni kiriting:");
+          await sendMessage(env, chatId, "👋 Ismingizni kiriting:");
         }
         return;
       }
 
       if (text === "/admin") {
         if (role) await showAdminMenu(env, chatId, role);
-        else await sendMessage(env, chatId, "⛔️ Sizda admin huquqi yo'q.");
+        else await sendMessage(env, chatId, "⛔️ Huquq yo'q.");
         return;
       }
 
-      // Asosiy menyu tugmalari bosilganda kutishni to'xtatish
       const MAIN_MENU_CMDS = ["📝 Test tekshirish", "📋 Faol testlar", "🏆 Reyting", "⚙️ Profil", "💰 Hisobim"];
       if (MAIN_MENU_CMDS.includes(text)) { await setState(env, chatId, null); user.state = null; }
 
-      // Ro'yxatdan o'tish qadamlari
       if (["reg_name", "reg_lastname", "reg_fathername"].includes(user.state)) {
         await handleRegistrationText(env, user, text);
         return;
       }
 
-      if (!user.registered) { await sendMessage(env, chatId, "Ro'yxatdan o'tish uchun /start buyrug'ini bosing."); return; }
+      if (!user.registered) { await sendMessage(env, chatId, "/start ni bosing."); return; }
 
-      // 📢 Majburiy obuna — GLOBAL BLOKATOR (adminlar bundan mustasno)
-      if (!role) {
-        const ok = await requireSubscription(env, chatId);
-        if (!ok) return;
-      }
+      if (!role && !(await requireSubscription(env, chatId))) return;
 
-      // Profilni tahrirlash (matn)
-      if (user.state && user.state.startsWith("profile_edit_")) {
-        const h = await handleProfileEditText(env, user, text);
-        if (h) return;
-      }
+      if (user.state && user.state.startsWith("profile_edit_") && (await handleProfileEditText(env, user, text))) return;
+      if (role && user.state && await handleAddTestText(env, user, text)) return;
 
-      // Adminning matnli buyruqlari
-      if (role && ((user.state && user.state.startsWith("admin_")) )) {
-        const h = await handleAddTestText(env, user, text);
-        if (h) return;
-      }
-
-      // Reyting: kod orqali
       if (user.state === "waiting_rating_code") {
         await setState(env, chatId, null);
         await showTestRanking(env, chatId, text.trim(), false);
         return;
       }
 
-      // Depozit summasi
-      if (user.state === "waiting_deposit_amount") {
-        const h = await handleAddTestText(env, user, text);
-        if (h) return;
-      }
-
-      // Oddiy test kodini qabul qilish
-      if (user.state === "waiting_test_code") {
-        await handleTestCode(env, user, text);
-        return;
-      }
-
-      // Oddiy test javobini qabul qilish
+      if (user.state === "waiting_deposit_amount" && (await handleAddTestText(env, user, text))) return;
+      if (user.state === "waiting_test_code") { await handleTestCode(env, user, text); return; }
       if (user.state && user.state.startsWith("waiting_answers:")) {
         await handleAnswerSubmission(env, user, parseInt(user.state.split(":")[1], 10), text);
         return;
       }
 
       const handled = await handleMainMenuText(env, user, text);
-      if (!handled) {
-        await sendMessage(env, chatId, "Iltimos, kerakli amalni tugmalar orqali tanlang 👇", studentMainMenu());
-      }
+      if (!handled) await sendMessage(env, chatId, "Tugmalardan foydalaning 👇", studentMainMenu());
     }
   } catch (err) {
-    console.log("handleUpdate xato:", err.stack || err.message);
+    console.log("Xato:", err.stack || err.message);
   }
 }
 
-// ============================================================================
-// ================= CRON: REJALASHTIRILGAN VAZIFALAR =================
-// ============================================================================
 async function runScheduledTasks(env) {
   try {
-    // 1) Vaqti tugagan testlarni yopish va Natijalar kanaliga yakuniy reyting chiqarish
     const { results: expiredTests } = await env.DB.prepare(
       "SELECT * FROM tests WHERE is_closed = 0 AND datetime('now') > datetime(end_time)"
     ).all();
-
     for (const test of expiredTests || []) {
       await env.DB.prepare("UPDATE tests SET is_closed = 1 WHERE id = ?").bind(test.id).run();
-
       const ranking = await getRanking(env, test.id);
-      let msg = `🏁 <b>"${escapeHtml(test.subject || test.code)}"</b> testi (muddati tugashi bilan) avtomatik yakunlandi!\n\n🏆 <b>Yakuniy Reyting:</b>\n`;
-      if (ranking.length === 0) msg += "Hech kim ishlamadi.";
-      else ranking.slice(0, 15).forEach((r, i) => {
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        msg += `${medal} ${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)} — <b>${r.score}/${r.max_score}</b> ball\n`;
-      });
-
+      let msg = `🏁 "${escapeHtml(test.subject || test.code)}" testi yakunlandi!\n\n🏆 <b>Reyting:</b>\n`;
+      ranking.slice(0, 15).forEach((r, i) => { msg += `${i + 1}. ${escapeHtml(r.first_name)} — ${r.score} ball\n`; });
       const resultsChannels = await getChannels(env, "results");
       for (const ch of resultsChannels) await sendMessage(env, ch.chat_id, msg);
     }
-
-    // 2) Shaxsiy taymer tugashiga 5 daqiqa qolgan foydalanuvchilarga eslatma
-    const { results: soonTests } = await env.DB.prepare(
-      "SELECT * FROM tests WHERE is_closed = 0 AND timer > 0"
-    ).all();
-
-    for (const test of soonTests || []) {
-      const { results: sessions } = await env.DB.prepare(
-        "SELECT * FROM test_sessions WHERE test_id = ? AND reminded = 0"
-      ).bind(test.id).all();
-
-      for (const s of sessions || []) {
-        const elapsedMinutes = (Date.now() - new Date(s.started_at + "Z").getTime()) / 60000;
-        const remaining = test.timer - elapsedMinutes;
-        if (remaining <= 5 && remaining > 0) {
-          const already = await getSubmission(env, test.id, s.telegram_id);
-          if (already) continue;
-          await sendMessage(env, s.telegram_id, `⏰ Diqqat! Shaxsiy taymeringiz tugashiga <b>${Math.max(Math.round(remaining), 0)} daqiqa</b> qoldi.`);
-          await env.DB.prepare("UPDATE test_sessions SET reminded = 1 WHERE test_id = ? AND telegram_id = ?").bind(test.id, s.telegram_id).run();
-        }
-      }
-    }
-  } catch (err) {
-    console.log("Cron xato:", err.stack || err.message);
-  }
+  } catch (err) {}
 }
